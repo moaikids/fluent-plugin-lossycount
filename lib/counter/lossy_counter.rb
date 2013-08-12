@@ -26,8 +26,18 @@ module Counter
         end
 
         def get()
-            return @freq_counter
+            buf = {}
+            @freq_counter.each_pair { |key, value|
+                if value > (@num * (@gamma - @epsilon) ).to_i
+                    buf[key] = value
+                end
+            }
+            return buf
         end
+        
+        def get_num()
+            return @num
+        end 
 
         def sweep()
             length = @freq_counter.length
