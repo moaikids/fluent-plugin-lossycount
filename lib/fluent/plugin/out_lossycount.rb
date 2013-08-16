@@ -1,173 +1,123 @@
-module Fluent
-  class LossyCountOutput < BufferedOutput
+#require 'fluent/mixin/config_placeholders'
+require_relative '../../counter/lossy_counter'
+
+class Fluent::LossyCountOutput < Fluent::Output
     Fluent::Plugin.register_output('lossycount', self)
-    attr_reader :size, :key_name
 
-    def initialize
-      super
-      require 'msgpack'
-    end
+    config_param :key_name, :string, :default => nil
+    config_param :time_windows, :time, :default => 60
+    config_param :output_tag, :string, :default => nil
+    config_param :output_key_name, :string, :default => 'key'
+    config_param :output_timestamp_name, :string, :default => 'timestamp'
+    config_param :output_value_name, :string, :default => 'value'
+    config_param :gamma, :float, :default => 0.005
+    config_param :epsilon, :float, :default => 0.004
+    config_param :enable_metrics, :bool, :default => false
+    config_param :metrics_tag, :string, :default => 'counter.metrics'
+    config_param :verbose, :bool, :default => false
 
-    def configure(conf)
-      super
+    def configure(config)
+        super
+        unless config.has_key?('key_name')
+            raise Fluent::ConfigError, "you must set 'key_name'"
+        end
+        unless config.has_key?('output_tag')
+            raise Fluent::ConfigError, "you must set 'output_tag'"
+        end
 
-      @size = conf.has_key?('size') ? conf['size'] : -1
-      @key_name = conf.has_key?('key_name') ? conf['key_name'] : nil
+        @mutex = Mutex.new
+        @sleep_wait = 0.4
+        init_counter()
     end
 
     def start
-      super
-
-      @redis = Redis.new(:host => @host, :port => @port, :timeout => @timeout,
-                         :thread_safe => true, :db => @db_number)
+        super
+        start_watch
     end
 
     def shutdown
-      @redis.quit
+        super
+        @watcher.terminate
+        @watcher.join
     end
 
-    def format(tag, time, record)
-      identifier = [tag, time].join(".")
-      [identifier, record].to_msgpack
+    def init_counter()
+        @counter = Counter::LossyCounter.new({:gamma => @gamma, :epsilon => @epsilon})
     end
 
-    def write(chunk)
-      @redis.pipelined {
-        chunk.open { |io|
-          begin
-            MessagePack::Unpacker.new(io).each { |message|
-              begin
-                (tag, record) = message
-                if @store_type == 'zset'
-                  operation_for_zset(record)
-                elsif @store_type == 'set'
-                  operation_for_set(record)
-                elsif @store_type == 'list'
-                  operation_for_list(record)
-                elsif @store_type == 'string'
-                  operation_for_string(record)
-                end
-              rescue NoMethodError => e
-                puts e
-              end
-            }
-          rescue EOFError
-            # EOFError always occured when reached end of chunk.
-          end
+    def flush_counter(step)
+        freq_counter = {}
+        metrics = {}
+        @mutex.synchronize {
+            freq_counter = @counter.get()
+            if @enable_metrics
+                metrics = @counter.get_metrics()
+            end 
+            init_counter()
         }
-      }
-    end
-
-    def operation_for_zset(record)
-      now = Time.now.to_i
-      k = traverse(record, @key_name).to_s
-      if @score_name
-        s = traverse(record, @score_name)
-      else
-        s = now
-      end
-      v = traverse(record, @value_name)
-      sk = @key_prefix + k + @key_suffix
-      
-      @redis.multi do
-        @redis.zadd sk , s, v
-        if @key_expire > 0
-          @redis.expire sk , @key_expire
+        flush_time = Fluent::Engine.now.to_i
+        if @verbose
+            $log.info "flushtime : " + flush_time.to_s
+            $log.info "{ "
         end
-        if @value_expire > 0
-          @redis.zremrangebyscore sk , '-inf' , (now - @value_expire)
+        freq_counter.each_pair { |key, value|
+            map = {@output_key_name => key, @output_timestamp_name => flush_time, @output_value_name => value}
+            if @verbose
+                $log.info map
+            end
+            Fluent::Engine.emit(@output_tag, Fluent::Engine.now, map)
+        }
+        if @verbose
+            $log.info "}"
         end
-      end
-      if @value_length > 0
-        script = generate_zremrangebyrank_script(sk, @value_length)
-        @redis.eval script
-      end
-    end
 
-    def operation_for_set(record)
-      k = traverse(record, @key_name).to_s
-      v = traverse(record, @value_name)
-      sk = @key_prefix + k + @key_suffix
-              
-      @redis.sadd sk, v
-      if @key_expire > 0
-        @redis.expire sk, @key_expire
-      end
-    end
-
-    def operation_for_list(record)
-      k = traverse(record, @key_name).to_s
-      v = traverse(record, @value_name)
-      sk = @key_prefix + k + @key_suffix
-
-      @redis.multi do
-        if @list_order == 'asc'
-          @redis.rpush sk, v
-        else
-          @redis.lpush sk, v
-        end             
-        if @key_expire > 0
-          @redis.expire sk, @key_expire
+        if @enable_metrics
+            if @verbose
+                $log.info "metrics : " + metrics.to_s
+            end
+            Fluent::Engine.emit(@metrics_tag, Fluent::Engine.now, metrics)
         end
-      end
-      if @value_length > 0
-        script = generate_ltrim_script(sk, @value_length, @list_order)
-        @redis.eval script
-      end 
     end
 
-    def operation_for_string(record)
-      k = traverse(record, @key_name).to_s
-      v = traverse(record, @value_name)
-      sk = @key_prefix + k + @key_suffix
-         
-      @redis.multi do        
-        @redis.set sk, v
-        if @key_expire > 0
-          @redis.expire sk, @key_expire
-        end
-      end
+    def start_watch
+        @watcher = Thread.new{
+            @last_checked = Fluent::Engine.now.to_i
+            while true
+                sleep @sleep_wait
+                now = Fluent::Engine.now.to_i
+                if now - @last_checked >= @time_windows
+                    flush_counter(now - @last_checked)
+                    @last_checked = now
+                end
+            end
+        }
     end
 
-    def generate_zremrangebyrank_script(key, maxlen)
-      script  = "local key = '" + key.to_s + "'\n"
-      script += "local maxlen = " + maxlen.to_s + "\n"
-      script += "local len = tonumber(redis.call('ZCOUNT', key, '-inf', '+inf'))\n"
-      script += "if len > maxlen then\n"
-      script += "    local l = len - maxlen\n"
-      script += "    if l >= 0 then\n"
-      script += "        return redis.call('ZREMRANGEBYRANK', key, 0, l)\n"
-      script += "    end\n"
-      script += "end\n"
-      return script
-    end
-
-    def generate_ltrim_script(key, maxlen, order)
-      script  = "local key = '" + key.to_s + "'\n"
-      script += "local maxlen = " + maxlen.to_s + "\n"
-      script += "local order ='" + order.to_s + "'\n"
-      script += "local len = tonumber(redis.call('LLEN', key))\n"
-      script += "if len > maxlen then\n"
-      script += "    if order == 'asc' then\n"
-      script += "        local l = len - maxlen\n"
-      script += "        return redis.call('LTRIM', key, l, -1)\n"
-      script += "    else\n"
-      script += "        return redis.call('LTRIM', key, 0, maxlen - 1)\n"
-      script += "    end\n"
-      script += "end\n"
-      return script
+    def emit(tag, es, chain)
+        es.each {|time,record|
+            k = traverse(record, @key_name)
+            if k
+                if k.is_a?(Array)
+                    k.each{ |v|
+                        @counter.add(v.to_s)
+                    }
+                else
+                    @counter.add(k.to_s)
+                end
+            end
+        }
+        chain.next
     end
 
     def traverse(data, key)
-      val = data
-      key.split('.').each{ |k|
-        if val.has_key?(k)
-          val = val[k]
-        else
-          return nil
-        end
-      }
-      return val
+        val = data
+        key.split('.').each{ |k|
+            if val.has_key?(k)
+                val = val[k]
+            else
+                return nil
+            end
+        }
+        return val
     end
-  end
 end

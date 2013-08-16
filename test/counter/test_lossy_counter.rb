@@ -26,6 +26,8 @@ class LossyCounterTest < Test::Unit::TestCase
         assert_equal freq_counter['b'] , 3
         assert_equal freq_counter['c'] , 1
         assert_equal freq_counter['d'] , nil
+
+        p @counter.get_status()
     end
 
     def test_add_and_sweep()

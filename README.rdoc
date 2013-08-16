@@ -9,7 +9,18 @@
 == Configuration
 
     <match pattern>
-      type lossycount
+        type lossycount
+        gamma LOSSY_COUNT_GAMMA
+        epsilon LOSSY_COUNT_EPSILON
+        key_name INPUT_KEY_NAME
+        time_windows SECONDS
+        output_tag OUTPUT_TAG_NAME
+        output_key_name OUTPUT_KEY_NAME
+        output_timestamp_name OUTPUT_TIMESTAMP_NAME
+        output_value_name OUTPUT_VALUE_NAME
+        enable_metrics true
+        metrics_tag METRICS_OUTPUT_TAG_NAME
+        verbose false
     </match>
 
 == Copyright
