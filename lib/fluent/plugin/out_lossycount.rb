@@ -1,4 +1,3 @@
-#require 'fluent/mixin/config_placeholders'
 require_relative '../../counter/lossy_counter'
 
 class Fluent::LossyCountOutput < Fluent::Output
