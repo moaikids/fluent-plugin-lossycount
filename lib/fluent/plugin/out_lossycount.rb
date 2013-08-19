@@ -178,8 +178,16 @@ module Counter
             return @max_size
         end
 
+        def get_num_x_gamma()
+            return @num.to_f * @gamma
+        end
+
+        def get_num_x_gamma_d_epsilon()
+            return @num.to_f * (@gamma - @epsilon)
+        end
+
         def get_metrics()
-            return {'num' => get_num(), 'max_size' => get_current_max_size(), 'current_size' => @freq_counter.size() , 'reduced_size' => get().size(), "gamma" => @gamma , "epsilon" => @epsilon , "n_x_gamma" => (@num.to_f * @gamma), "n_x_gamma-epsilon" => (@num.to_f * (@gamma - @epsilon)) }
+            return {'num' => get_num(), 'max_size' => get_current_max_size(), 'current_size' => @freq_counter.size() , 'reduced_size' => get().size(), "gamma" => @gamma , "epsilon" => @epsilon , "n_x_gamma" => get_num_x_gamma(), "n_x_gamma-epsilon" => get_num_x_gamma_d_epsilon() }
         end
 
     end

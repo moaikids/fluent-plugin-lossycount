@@ -40,8 +40,8 @@ class LossyCounterTest < Test::Unit::TestCase
             now = ((Time.now.to_f * 10000000) % 10000000).to_i
             for r in radix
                 key = now & r
-                counter.add(key)
-                if buf.has_key?(key)
+                counter.add(key.to_s)
+                if buf.has_key?(key.to_s)
                     buf[key] += 1
                 else
                     buf[key] = 1
@@ -49,18 +49,18 @@ class LossyCounterTest < Test::Unit::TestCase
             end
         end
 
-        freq_count = counter.get()
         n = counter.get_num()
-        g = (n * @gamma).to_i
+        g = counter.get_num_x_gamma().to_i
         e = (n * @epsilon).to_i
-        ge = (n * (@gamma - @epsilon)).to_i
+        ge = counter.get_num_x_gamma_d_epsilon().to_i
+        freq_count = counter.get()
 
         p counter.get_metrics()
 
         buf.each_pair { |key, value|
             if freq_count.has_key?(key)
                 if freq_count[key] >= g.to_i
-                    #assert_equal value , freq_count[key]
+                    assert_equal value , freq_count[key]
                 else
                     assert_operator e.to_i , :>= , (freq_count[key] - value).abs
                 end
