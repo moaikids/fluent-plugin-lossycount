@@ -3,8 +3,9 @@ Gem::Specification.new do |gem|
     gem.name        = "fluent-plugin-lossycount"
     gem.version     = "0.0.1"
     gem.authors     = ["moaikids"]
-    gem.summary     = %q{Fluentd plugin}
-    gem.description = %q{Fluentd plugin}
+    gem.licenses    = ["Apache License Version 2.0"]
+    gem.summary     = %q{Lossy count output plugin for Fluentd}
+    gem.description = %q{Lossy count output plugin for Fluentd...}
     gem.homepage    = "https://github.com/moaikids/fluent-plugin-lossycount"
 
     gem.files         = `git ls-files`.split($\)

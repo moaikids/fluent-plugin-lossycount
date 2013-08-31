@@ -1,4 +1,4 @@
-= counter
+= Lossy count output plugin for Fluentd
 
 == Overview
 
